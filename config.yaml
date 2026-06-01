@@ -1,0 +1,57 @@
+# Smart RangRang 配置文件
+# 所有可调参数集中管理
+
+server:
+  host: "0.0.0.0"
+  port: 8765
+  sample_rate: 16000
+  chunk_ms: 40
+
+asr:
+  device: "cuda:0"
+  model: "iic/SenseVoiceSmall"
+  timeout_ms: 10000
+
+llm:
+  model: "qwen2.5:14b"
+  base_url: "http://127.0.0.1:11434"
+  first_token_timeout_ms: 15000
+  total_timeout_ms: 60000
+
+tts:
+  voice: "zh-CN-XiaoxiaoNeural"
+  rate: "+15%"
+  pitch: "+0Hz"
+  chunk_timeout_ms: 5000
+
+vad:
+  energy_threshold: 0.015
+  min_speech_frames: 4
+  min_silence_frames: 12
+
+echo_judge:
+  corr_threshold: 0.5
+  corr_weak_threshold: 0.3
+  env_threshold: 0.6
+  ref_buffer_seconds: 2.0
+
+interrupt:
+  vad_consecutive_frames: 10
+  vad_energy_threshold: 0.04
+
+sentence:
+  punct_silence_ms: 200
+  force_silence_ms: 800
+  long_text_chars: 100
+  long_text_silence_ms: 300
+  incomplete_extend_ms: 1500
+  pending_timeout_ms: 5000
+
+watchdog:
+  session_idle_ms: 30000
+  heartbeat_interval_ms: 3000
+  heartbeat_timeout_ms: 8000
+  max_consecutive_errors: 3
+
+data:
+  dir: "../data"

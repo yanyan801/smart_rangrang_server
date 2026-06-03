@@ -353,9 +353,10 @@ async def _process_audio(ws, audio_chunk, session, tts_task, llm_cancel,
             session["state"] = LISTEN
             return
 
-        # 过滤纯标点/空白噪声误识别
-        if _is_noise(text):
-            logger.info(f"ASR noise filtered: '{text}'")
+        # 过滤纯标点/空白 + 短音频填充词噪声误识别
+        audio_dur = len(speech_audio) / SAMPLE_RATE
+        if _is_noise(text, audio_dur):
+            logger.info(f"ASR noise filtered: '{text}' ({audio_dur:.1f}s)")
             session["state"] = LISTEN
             return
 
@@ -502,11 +503,19 @@ async def _send_heartbeat(ws, wd, interval_ms):
         pass
 
 
-def _is_noise(text: str) -> bool:
-    """纯标点/空白 → 视为噪音"""
+_FILLER_CHARS = {"嗯", "啊", "哦", "呃", "唔", "唉", "哎", "呀", "咦", "哟", "呵", "嗨"}
+
+def _is_noise(text: str, audio_dur: float = 0.0) -> bool:
+    """纯标点/空白 或 单字填充词 → 视为噪音"""
     import re
-    cleaned = re.sub(r'[^一-鿿\w]', '', text)
-    return len(cleaned) == 0
+    cleaned = re.sub(r'[^一-鿿\w]', '', text).strip()
+    # 纯标点/空白
+    if len(cleaned) == 0:
+        return True
+    # 短音频 + 单字填充词
+    if audio_dur < 1.5 and len(cleaned) <= 2 and all(c in _FILLER_CHARS for c in cleaned):
+        return True
+    return False
 
 
 def _config(section: str) -> dict:

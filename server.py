@@ -11,21 +11,36 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import time
 import traceback
+from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from .engines.stt_engine import ASREngine
-from .engines.llm_engine import LLMEngine
-from .engines.tts_engine import TTSEngine
-from .engines.vad_engine import VADEngine
-from .core.echo_judge import EchoJudge, InterruptDetector
-from .core.sentence_judge import SentenceJudge
-from .core.memory_manager import MemoryManager
-from .core.watchdog import SessionWatchdog, ComponentHealth
+# 支持直接 `python server.py` 运行
+if __name__ != "__main__":
+    from .engines.stt_engine import ASREngine
+    from .engines.llm_engine import LLMEngine
+    from .engines.tts_engine import TTSEngine
+    from .engines.vad_engine import VADEngine
+    from .core.echo_judge import EchoJudge, InterruptDetector
+    from .core.sentence_judge import SentenceJudge
+    from .core.memory_manager import MemoryManager
+    from .core.watchdog import SessionWatchdog, ComponentHealth
+else:
+    _here = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(_here))
+    from smart_rangrang_server.engines.stt_engine import ASREngine
+    from smart_rangrang_server.engines.llm_engine import LLMEngine
+    from smart_rangrang_server.engines.tts_engine import TTSEngine
+    from smart_rangrang_server.engines.vad_engine import VADEngine
+    from smart_rangrang_server.core.echo_judge import EchoJudge, InterruptDetector
+    from smart_rangrang_server.core.sentence_judge import SentenceJudge
+    from smart_rangrang_server.core.memory_manager import MemoryManager
+    from smart_rangrang_server.core.watchdog import SessionWatchdog, ComponentHealth
 
 logger = logging.getLogger("server")
 
@@ -592,3 +607,34 @@ document.getElementById('stop').onclick = () => {
 </script>
 </body>
 </html>"""
+
+
+# === 直接运行入口 ===
+if __name__ == "__main__":
+    import argparse
+    import yaml
+    import uvicorn
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", "-c", default="config.yaml")
+    args = parser.parse_args()
+
+    config_path = Path(args.config)
+    if not config_path.exists():
+        print(f"Config not found: {config_path}")
+        sys.exit(1)
+
+    with open(config_path, encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+
+    set_config(config)
+    load_engines(config)
+    asr.load()
+    vad.load()
+
+    host = config["server"]["host"]
+    port = config["server"]["port"]
+    print(f"Starting on http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port, log_level="info")

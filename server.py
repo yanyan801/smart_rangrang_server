@@ -94,6 +94,7 @@ def load_engines(config: dict):
         energy_threshold=cfg["vad"]["energy_threshold"],
         min_speech_frames=cfg["vad"]["min_speech_frames"],
         min_silence_frames=cfg["vad"]["min_silence_frames"],
+        max_speech_s=cfg["vad"]["max_speech_s"],
     )
 
     echo_judge = EchoJudge(

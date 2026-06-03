@@ -25,9 +25,10 @@ tts:
   chunk_timeout_ms: 5000
 
 vad:
-  energy_threshold: 0.015
+  energy_threshold: 0.02
   min_speech_frames: 4
-  min_silence_frames: 12
+  min_silence_frames: 8
+  max_speech_s: 8.0
 
 echo_judge:
   corr_threshold: 0.5

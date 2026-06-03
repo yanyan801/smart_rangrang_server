@@ -18,11 +18,13 @@ class VADEngine:
     def __init__(self, sample_rate: int = 16000,
                  energy_threshold: float = 0.02,
                  min_speech_frames: int = 3,
-                 min_silence_frames: int = 15):
+                 min_silence_frames: int = 8,
+                 max_speech_s: float = 8.0):
         self.sample_rate = sample_rate
         self.energy_threshold = energy_threshold
         self.min_speech_frames = min_speech_frames
         self.min_silence_frames = min_silence_frames
+        self.max_speech_s = max_speech_s
         self.state = _VADState()
 
     def load(self):
@@ -68,23 +70,18 @@ class VADEngine:
                     return "speech_start", None
             else:
                 state.silence_frames = 0
+                # 最长说话时长保护：超过 max_speech_s 强制断句
+                if self.max_speech_s > 0:
+                    dur = time.time() - state.speech_start_time
+                    if dur >= self.max_speech_s:
+                        return self._end_speech()
         else:
             # 静音帧
             if state.is_speaking:
                 state.silence_frames += 1
                 state.accumulated_audio.append(audio_chunk)
                 if state.silence_frames >= self.min_silence_frames:
-                    # 说话结束 → 返回累积音频（含尾部静音，ASR不受影响）
-                    state.is_speaking = False
-                    state.speech_end_time = time.time()
-                    chunk_ms = len(audio_chunk) / self.sample_rate * 1000
-                    state.last_silence_ms = state.silence_frames * chunk_ms
-                    combined = np.concatenate(state.accumulated_audio)
-                    duration = len(combined) / self.sample_rate
-                    state.accumulated_audio = []
-                    state.speech_frames = 0
-                    logger.debug(f"VAD: speech_end ({duration:.1f}s)")
-                    return "speech_end", combined
+                    return self._end_speech()
             else:
                 # 持续静音: 保留缓冲（捕捉句首）
                 state.accumulated_audio.append(audio_chunk)
@@ -101,6 +98,20 @@ class VADEngine:
 
     def reset(self):
         self.state = _VADState()
+
+    def _end_speech(self):
+        """结束当前语音段，返回累积音频"""
+        state = self.state
+        state.is_speaking = False
+        state.speech_end_time = time.time()
+        state.last_silence_ms = state.silence_frames * 40  # 每帧 40ms
+        combined = np.concatenate(state.accumulated_audio)
+        duration = len(combined) / self.sample_rate
+        state.accumulated_audio = []
+        state.speech_frames = 0
+        reason = "silence" if state.silence_frames >= self.min_silence_frames else "max_duration"
+        logger.info(f"VAD: speech_end ({duration:.1f}s, reason={reason})")
+        return "speech_end", combined
 
 
 class _VADState:

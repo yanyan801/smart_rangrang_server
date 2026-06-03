@@ -31,6 +31,7 @@ class ASREngine:
         )
         self._load_time = time.time() - t0
         logger.info(f"ASR model loaded in {self._load_time:.1f}s")
+        self._warmup()
 
     @property
     def is_loaded(self) -> bool:
@@ -80,6 +81,15 @@ class ASREngine:
             text = result[0].get("text", "")
             return _clean_tags(text)
         return ""
+
+    def _warmup(self):
+        """GPU JIT 预热：用静音跑一次推理，避免首次对话延迟"""
+        import numpy as np
+        import time
+        t0 = time.time()
+        dummy = np.zeros(16000, dtype=np.float32)  # 1s 静音
+        _ = self.transcribe(dummy)
+        logger.info(f"ASR warmup done in {time.time() - t0:.1f}s")
 
 
 def _clean_tags(text: str) -> str:

@@ -337,6 +337,12 @@ async def _process_audio(ws, audio_chunk, session, tts_task, llm_cancel,
             session["state"] = LISTEN
             return
 
+        # 过滤纯标点/空白噪声误识别
+        if _is_noise(text):
+            logger.info(f"ASR noise filtered: '{text}'")
+            session["state"] = LISTEN
+            return
+
         await ws.send_json({
             "type": "asr_result", "text": text, "time_s": round(t_asr, 2),
         })
@@ -478,6 +484,13 @@ async def _send_heartbeat(ws, wd, interval_ms):
                 break
     except asyncio.CancelledError:
         pass
+
+
+def _is_noise(text: str) -> bool:
+    """纯标点/空白 → 视为噪音"""
+    import re
+    cleaned = re.sub(r'[^一-鿿\w]', '', text)
+    return len(cleaned) == 0
 
 
 def _config(section: str) -> dict:

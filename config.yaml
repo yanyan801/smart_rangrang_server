@@ -20,7 +20,7 @@ llm:
 
 tts:
   voice: "zh-CN-XiaoxiaoNeural"
-  rate: "+15%"
+  rate: "+0%"
   pitch: "+0Hz"
   chunk_timeout_ms: 5000
 

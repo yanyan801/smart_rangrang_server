@@ -9,7 +9,8 @@ from typing import AsyncIterator
 
 logger = logging.getLogger(__name__)
 
-_CHUNK_BYTES = 640 * 2   # 40ms @ 16kHz/16bit = 1280 bytes
+_CHUNK_BYTES = 640 * 2        # 40ms @ 16kHz/16bit = 1280 bytes
+_SEND_BYTES = 640 * 2 * 4      # 一次发送 160ms PCM (4 个 chunk)
 
 
 class TTSEngine:
@@ -48,15 +49,15 @@ class TTSEngine:
                             None, _decode_mp3, bytes(mp3_buf)
                         )
                     except Exception:
-                        continue  # 解码失败，继续积累 MP3
+                        continue
 
                     mp3_buf.clear()
                     pcm_buf.extend(pcm)
 
-                    # 输出完整的 PCM chunks
-                    while len(pcm_buf) >= _CHUNK_BYTES:
-                        chunk_out = bytes(pcm_buf[:_CHUNK_BYTES])
-                        del pcm_buf[:_CHUNK_BYTES]
+                    # 攒够一批 PCM 再发送，减少 WebSocket send 次数
+                    while len(pcm_buf) >= _SEND_BYTES:
+                        chunk_out = bytes(pcm_buf[:_SEND_BYTES])
+                        del pcm_buf[:_SEND_BYTES]
                         yield chunk_out
 
             # 流结束：flush 残留 MP3
@@ -69,10 +70,9 @@ class TTSEngine:
                 except Exception:
                     pass
 
-            # flush 残留 PCM
-            while len(pcm_buf) >= _CHUNK_BYTES:
-                chunk_out = bytes(pcm_buf[:_CHUNK_BYTES])
-                del pcm_buf[:_CHUNK_BYTES]
+            # flush 残留 PCM（不足 _SEND_BYTES 也发送）
+            if pcm_buf:
+                chunk_out = bytes(pcm_buf)
                 yield chunk_out
 
         except asyncio.CancelledError:

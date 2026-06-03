@@ -173,6 +173,7 @@ async def ws_endpoint(ws: WebSocket):
     asr_cfg = _config("asr")
     llm_cfg = _config("llm")
     tts_cfg = _config("tts")
+    int_cfg = _config("interrupt")
 
     # 会话初始化
     session_id = memory.start_session()
@@ -187,6 +188,7 @@ async def ws_endpoint(ws: WebSocket):
     session = {"state": IDLE}
     tts_task: list[asyncio.Task] = []
     llm_cancel: list[asyncio.Event] = []
+    interrupt_audio_buf: list = []  # 缓存打断触发前的语音帧，供 ASR 使用
 
     # 看门狗
     wd = SessionWatchdog(
@@ -231,9 +233,19 @@ async def ws_endpoint(ws: WebSocket):
                 if s == SPEAK:
                     try:
                         energy = vad.process_frame(audio_chunk)
+                        # 缓存高于阈值的帧，打断触发后回放给 VAD 以获取完整 ASR 文本
+                        if energy >= int_cfg["vad_energy_threshold"]:
+                            interrupt_audio_buf.append(audio_chunk.copy())
+                        else:
+                            interrupt_audio_buf.clear()
+
                         if interrupt_detector.process(audio_chunk, energy):
                             logger.info("INTERRUPT")
                             await _interrupt(ws, session, tts_task, llm_cancel)
+                            # 把触发前的语音帧回放给 VAD，确保 ASR 拿到完整句子
+                            for chunk in interrupt_audio_buf:
+                                evt, _ = vad.update(vad.process_frame(chunk), chunk)
+                            interrupt_audio_buf.clear()
                             continue
                     except Exception as e:
                         logger.error(f"Interrupt error: {e}")
@@ -429,6 +441,7 @@ async def _llm_tts(ws, text, llm_cancel, tts_task, session, llm_cfg, tts_cfg):
 
                 chunk_count = 0
                 t_tts_start = time.time()
+                total_samples = 0  # 累计已发送采样数，用于实时限速
                 try:
                     async for audio_bytes in tts.synthesize_stream(llm_text):
                         if cancel_evt.is_set():
@@ -443,7 +456,13 @@ async def _llm_tts(ws, text, llm_cancel, tts_task, session, llm_cfg, tts_cfg):
                         echo_judge.feed_reference(ref_chunk)
                         await ws.send_bytes(audio_bytes)
                         chunk_count += 1
-                        await asyncio.sleep(0)
+                        total_samples += len(audio_bytes) // 2
+
+                        # 限速到实时播放速度，防止队列溢出导致卡顿
+                        expected = total_samples / SAMPLE_RATE
+                        actual = time.time() - t_tts_start
+                        if expected > actual:
+                            await asyncio.sleep(expected - actual)
 
                     health.report_ok("tts")
                 except Exception as e:
@@ -476,6 +495,7 @@ async def _interrupt(ws, session, tts_task, llm_cancel):
     vad.reset()
     interrupt_detector.reset()
     sentence_judge.reset()
+    llm.reset_history()           # 放弃被中断话题的上下文
     session["state"] = LISTEN
     logger.info("State: SPEAK → LISTEN (interrupted)")
 
@@ -506,13 +526,15 @@ async def _send_heartbeat(ws, wd, interval_ms):
 _FILLER_CHARS = {"嗯", "啊", "哦", "呃", "唔", "唉", "哎", "呀", "咦", "哟", "呵", "嗨"}
 
 def _is_noise(text: str, audio_dur: float = 0.0) -> bool:
-    """纯标点/空白 或 单字填充词 → 视为噪音"""
+    """纯标点/空白 / 单字 / 填充词 → 视为噪音"""
     import re
     cleaned = re.sub(r'[^一-鿿\w]', '', text).strip()
-    # 纯标点/空白
     if len(cleaned) == 0:
         return True
-    # 短音频 + 单字填充词
+    # 短音频 + 单字结果（如环境噪音被识别成"我"）
+    if audio_dur < 1.5 and len(cleaned) == 1:
+        return True
+    # 短音频 + 填充词双字（如"嗯嗯"）
     if audio_dur < 1.5 and len(cleaned) <= 2 and all(c in _FILLER_CHARS for c in cleaned):
         return True
     return False

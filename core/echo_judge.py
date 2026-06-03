@@ -111,44 +111,55 @@ class EchoJudge:
 
 class InterruptDetector:
     """
-    打断检测器：VAD + Echo Judge 双模 AND 逻辑
+    打断检测器：动态能量基线 + Echo Judge 双模 AND 逻辑
 
-    打断 = VAD 检测到连续语音 AND Echo Judge 判断不是回声
+    播放期间扬声器回声建立能量基线，真人说话时能量显著高于基线。
+    不依赖波形对齐，避免声学延迟导致的回声误判。
     """
 
     def __init__(self,
                  echo_judge: EchoJudge,
-                 vad_consecutive_frames: int = 10,   # 连续语音帧确认
-                 vad_energy_threshold: float = 0.04):  # 语音能量阈值
+                 vad_consecutive_frames: int = 12,
+                 vad_energy_threshold: float = 0.04,
+                 energy_boost_ratio: float = 1.2):
         self.echo_judge = echo_judge
         self.vad_consecutive_frames = vad_consecutive_frames
         self.vad_energy_threshold = vad_energy_threshold
+        self.energy_boost_ratio = energy_boost_ratio
         self._speech_counter = 0
-        self._echo_counter = 0
+        self._energy_history: list[float] = []  # 近期能量基线
+        self._history_max = 75  # 3 秒 @ 40ms/帧
 
     def process(self, mic_chunk: np.ndarray, energy: float) -> bool:
         """
         处理一帧麦克风音频，返回是否触发打断。
-
-        返回: True = 真人打断，应触发 interrupt
         """
+        # 维护能量基线（中位数，抗干扰）
+        self._energy_history.append(energy)
+        if len(self._energy_history) > self._history_max:
+            self._energy_history.pop(0)
+
+        # 绝对阈值：能量太低 → 静音
         if energy < self.vad_energy_threshold:
-            # 能量太低 → 静音 → 重置计数器
             self._speech_counter = 0
-            self._echo_counter = 0
             return False
 
-        is_echo, peak, _ = self.echo_judge.judge(mic_chunk)
+        # 相对阈值：能量必须显著高于播放基线（真人声音叠加在回声之上）
+        if len(self._energy_history) >= 25:  # 至少 1 秒基线
+            import numpy as np
+            baseline = float(np.median(self._energy_history))
+            if baseline > 0.01 and energy < baseline * self.energy_boost_ratio:
+                self._speech_counter = 0
+                return False
 
+        # Echo Judge 二次确认
+        is_echo, peak, _ = self.echo_judge.judge(mic_chunk)
         if is_echo:
             self._speech_counter = 0
-            self._echo_counter += 1
-        else:
-            self._speech_counter += 1
-            self._echo_counter = 0
+            return False
 
+        self._speech_counter += 1
         if self._speech_counter >= self.vad_consecutive_frames:
-            # 连续 N 帧检测到非回声语音 → 触发打断
             logger.info(
                 f"InterruptDetector: TRIGGER (speech_frames={self._speech_counter})"
             )
@@ -158,6 +169,6 @@ class InterruptDetector:
         return False
 
     def reset(self):
-        """重置计数器"""
+        """重置计数器和基线"""
         self._speech_counter = 0
-        self._echo_counter = 0
+        self._energy_history = []

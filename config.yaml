@@ -38,7 +38,7 @@ echo_judge:
 
 interrupt:
   vad_consecutive_frames: 10
-  vad_energy_threshold: 0.04
+  vad_energy_threshold: 0.02
 
 sentence:
   punct_silence_ms: 200
